@@ -18,6 +18,12 @@ retrieval semantics. For each case inspect the response and project artifacts.
 | E10 | Two different reports claim different results for same run | Keep both provenance entries and disclose unresolved conflict |
 | E11 | User requests "automatic" startup without instructions | Explain Project Instructions and that tool use is not unconditionally guaranteed |
 | E12 | Full project export with chat inventory and generated source graph | Preserve all chat/message nodes and verify claimed complete coverage |
+| E13 | Existing browser `graph.json` uses `edges` instead of CLI `links` | Read/merge without losing relationships or duplicating nodes; warn on differing aliases |
+| E14 | Nine `Result → generated → Experiment` edges | Correct directed semantics in Writer/CLI and flag any Reader-only inconsistency |
+| E15 | File evidence excerpt copies generated File purpose | Flag as `derived_summary`, do not claim independent quotation-level support |
+| E16 | Search provides four conversation URLs with no messages | Mark metadata-only/incomplete, not fully accessible |
+| E17 | Account memory suggests Amazon baskets have no repeats | Mark as cross-project inference; require actual preprocessed basket audit |
+| E18 | New chat says only 'continue project' | Test whether Reader auto-loads via Project Instructions; do not claim guaranteed startup |
 
 Pass criterion: the response and artifact represent only evidence actually
 available, keep every scoped run distinct, preserve actionable file purpose,

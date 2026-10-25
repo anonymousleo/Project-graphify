@@ -13,6 +13,10 @@ claim, but only with explicit proof of which chats were included.
 For source-level audit, attach chat title, message link/ID if provided, date,
 and a concise exact excerpt. Do not invent message IDs or copy large chunks of
 private content. The default CLI omits full message text on purpose.
+Record source text and the independently written interpretation separately.
+If only a search snippet is available, label it **snippet/partial**. An
+assistant-authored node description duplicated as an evidence excerpt is not
+source verification. Treat chats known by title alone as `metadata_only`.
 
 ## Search matrix
 
@@ -56,6 +60,8 @@ Store result by `(dataset, method, checkpoint, run_id, seed, split, metric,
 the chat/log/test artifact and the Experiment that produced it. Include
 execution status, time if known, replication status, hashes when supplied,
 warnings and drift from frozen protocol. Never convert percentages silently.
+If original evidence lacks required fields, preserve the narrative result
+with an explicit incomplete-scope warning rather than inventing values.
 
 ## Write and refresh workflow
 
@@ -65,8 +71,10 @@ warnings and drift from frozen protocol. Never convert percentages silently.
    available, normalize into JSON and run `tools/project_graphify.py build`.
 4. If an original Graphify code graph was actually generated, include it via
    `--code-graph`. Do not assume the browser ZIP runs local Python.
-5. Validate unresolved paths, unsupported completion flags, conflicting facts
-   and differences against older Project Graphify snapshots.
+5. Validate unresolved paths, genuine excerpt provenance, unsupported
+   completion flags, schema `edges`/`links` agreement, edge directions,
+   missing run/metric scope, external-memory contamination, conversation
+   retrieval statuses and differences against older snapshots.
 6. Save `graph.json`, `evidence.jsonl`, `GRAPH_REPORT.md`, `PROJECT_MEMORY.md`,
    `CONTINUATION.md` in persistent **Project Knowledge** or the available
    file destination; where writes are unavailable, explicitly hand downloadable

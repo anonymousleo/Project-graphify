@@ -18,7 +18,8 @@ from pathlib import Path
 import re
 import sys
 
-SCHEMA = "project-graphify-1.0"
+SCHEMA = "project-graphify/v1"
+ACCEPTED_SCHEMAS = {SCHEMA, "project-graphify-1.0"}
 KINDS = {
     "Project", "Goal", "Requirement", "Decision", "File", "Function",
     "Environment", "Experiment", "Result", "Metric", "Task", "Blocker",
@@ -26,6 +27,20 @@ KINDS = {
 }
 EVIDENCE_STATES = {"observed", "user_reported", "assistant_proposed", "inferred", "unknown"}
 PATH_PATTERN = re.compile(r"(?<![\w])(?:/home/[\w.-]+/|~/|\$HOME/|/workspace/)[\w./()_-]+")
+
+
+def graph_edges(graph: dict) -> list[dict]:
+    """Read either historical graph dialect without silently losing links."""
+    edges = graph.get("edges")
+    links = graph.get("links")
+    if edges is not None and links is not None and edges != links:
+        raise ValueError("graph.edges and graph.links disagree; resolve before merging")
+    result = edges if edges is not None else links
+    if result is None:
+        return []
+    if not isinstance(result, list):
+        raise ValueError("graph relationships must be a list")
+    return result
 
 
 def stable_id(kind: str, key: str) -> str:
@@ -52,23 +67,61 @@ def evidence_items(items: list[dict], warnings: list[str], origin: str) -> list[
         if entry.get("confidence") not in EVIDENCE_STATES:
             entry["confidence"] = "unknown"
             warnings.append(f"{origin}: evidence lacked a recognized confidence")
+        entry.setdefault("excerpt_kind", "unverified_excerpt" if entry.get("excerpt") else "missing")
+        if str(entry.get("source_id", "")).startswith("mem:account:"):
+            entry["source_scope"] = "external_account_memory"
         out.append(entry)
     return sorted_unique(out)
+
+
+def mark_derived_excerpts(node: dict):
+    attrs = node.get("attributes", {})
+    summaries = {str(attrs.get("purpose", "")), str(node.get("details", ""))}
+    summaries.discard("")
+    for evidence in node.get("evidence", []):
+        if str(evidence.get("excerpt", "")).strip() in summaries:
+            evidence["excerpt_kind"] = "derived_summary"
 
 
 class Builder:
     def __init__(self, previous: dict | None = None):
         previous = previous or {}
+        if previous.get("schema", SCHEMA) not in ACCEPTED_SCHEMAS:
+            raise ValueError(f"Unsupported graph schema: {previous.get('schema')}")
         self.nodes: dict[str, dict] = {n["id"]: deepcopy(n) for n in previous.get("nodes", [])}
-        self.links: dict[str, dict] = {e["id"]: deepcopy(e) for e in previous.get("links", [])}
+        self.node_keys = {(n["type"], str(n["key"])): n["id"]
+                          for n in self.nodes.values()}
+        if len(self.node_keys) != len(self.nodes):
+            raise ValueError("existing graph contains duplicate (type, key) node identities")
+        self.links: dict[str, dict] = {}
+        self.edge_keys: dict[tuple[str, str, str], str] = {}
         self.warnings: list[str] = list(previous.get("warnings", []))
         self.code_graph = dict(previous.get("code_graph", {}))
+        self.old_coverage = dict(previous.get("coverage", {}))
+        for n in self.nodes.values():
+            if n.get("evidence"):
+                n["evidence"] = evidence_items(n["evidence"], self.warnings,
+                                                 f"{n['type']}:{n['key']}")
+                mark_derived_excerpts(n)
+        for edge in graph_edges(previous):
+            self.edge(edge["source"], edge["target"], edge["relation"],
+                      **{k: deepcopy(v) for k, v in edge.items()
+                         if k not in {"source", "target", "relation", "id"}},
+                      _original_id=edge.get("id"))
+
+    def node_id(self, kind: str, key: str) -> str:
+        return self.node_keys.get((kind, str(key)), stable_id(kind, key))
 
     def node(self, kind: str, key: str, title: str | None = None, **attrs) -> str:
-        node_id = stable_id(kind, key)
+        node_id = self.node_id(kind, key)
+        if attrs.get("evidence"):
+            attrs["evidence"] = evidence_items(attrs["evidence"], self.warnings,
+                                                f"{kind}:{key}")
         candidate = {"id": node_id, "type": kind, "key": str(key), "title": str(title or key), **deepcopy(attrs)}
+        mark_derived_excerpts(candidate)
         if node_id not in self.nodes:
             self.nodes[node_id] = candidate
+            self.node_keys[(kind, str(key))] = node_id
             return node_id
         old = self.nodes[node_id]
         if old.get("attributes", {}).get("placeholder") and not candidate.get("attributes", {}).get("placeholder"):
@@ -91,17 +144,45 @@ class Builder:
                     self.warnings.append(f"Conflicting {prop} values for {kind}:{key}; retained both")
         return node_id
 
-    def edge(self, source: str, target: str, relation: str, **attrs):
-        ident = edge_id(source, target, relation)
-        self.links[ident] = {"id": ident, "source": source, "target": target,
+    def edge(self, source: str, target: str, relation: str, _original_id=None, **attrs):
+        st = self.nodes.get(source, {}).get("type")
+        tt = self.nodes.get(target, {}).get("type")
+        reversed_legacy = ((relation == "generated" and st == "Result" and tt == "Experiment")
+                           or (relation == "failed_due_to" and st == "Blocker"
+                               and tt in {"Experiment", "Task", "Decision"}))
+        if reversed_legacy:
+            source, target = target, source
+            st, tt = tt, st
+            self.warnings.append(f"Corrected reversed {relation} relationship: {source} -> {target}")
+            if _original_id:
+                attrs["legacy_edge_id"] = _original_id
+                _original_id = None
+        if relation == "generated" and st and tt and (st, tt) != ("Experiment", "Result"):
+            self.warnings.append(f"Review ambiguous generated relation: {st} -> {tt}")
+        if relation == "failed_due_to" and st and tt and tt != "Blocker":
+            self.warnings.append(f"Review ambiguous failed_due_to relation: {st} -> {tt}")
+        ident = self.edge_keys.get((source, target, relation))
+        if ident is None:
+            ident = _original_id or edge_id(source, target, relation)
+            if ident in self.links:
+                ident = edge_id(source, target, relation)
+            self.edge_keys[(source, target, relation)] = ident
+        old = self.links.get(ident, {})
+        self.links[ident] = {**old, "id": ident, "source": source, "target": target,
                              "relation": relation, **attrs}
 
     def load_data(self, data: dict, include_message_text: bool = False):
         project = data.get("project", {})
         if not isinstance(project, dict) or not project.get("id"):
             raise ValueError("input.project.id is required")
-        project_id = self.node("Project", str(project["id"]), project.get("name", project["id"]),
-                               attributes=project)
+        old_projects = [n for n in self.nodes.values() if n["type"] == "Project"]
+        if len(old_projects) == 1 and old_projects[0].get("key") != str(project["id"]):
+            # Early browser builds used a project slug as the node key and a
+            # different project.id hash. Preserve the existing node identity.
+            project_id = old_projects[0]["id"]
+        else:
+            project_id = self.node("Project", str(project["id"]), project.get("name", project["id"]),
+                                   attributes=project)
 
         for source in data.get("sources", []):
             if not isinstance(source, dict) or not source.get("id"):
@@ -164,7 +245,7 @@ class Builder:
             for ev in evidence:
                 if ev.get("source_id"):
                     source_key = str(ev["source_id"])
-                    src_id = stable_id("Source", source_key)
+                    src_id = self.node_id("Source", source_key)
                     if src_id not in self.nodes:
                         src_id = self.node("Source", source_key, source_key,
                                            attributes={"identity": "source_id from fact evidence"})
@@ -172,7 +253,7 @@ class Builder:
             for link in fact.get("links", []):
                 target_kind = str(link["target_kind"]).strip().title()
                 target_key = str(link["target_key"])
-                target_id = stable_id(target_kind, target_key)
+                target_id = self.node_id(target_kind, target_key)
                 if target_id not in self.nodes:
                     self.node(target_kind, target_key, target_key, status="unknown",
                               attributes={"placeholder": True})
@@ -211,15 +292,54 @@ class Builder:
                                               if k not in {"nodes", "links", "edges", "hyperedges"}}}
 
     def output(self, project: dict, coverage: dict) -> dict:
-        coverage = dict(coverage or {})
+        coverage = {**self.old_coverage, **dict(coverage or {})}
         if coverage.get("exhaustive") is True and not coverage.get("verified_complete_export"):
             coverage["exhaustive"] = False
             self.warnings.append("Coverage cannot be marked exhaustive without verified_complete_export")
         coverage.setdefault("exhaustive", False)
+        self.current_coverage = coverage
+        self.validate()
+        normalized_edges = [self.links[k] for k in sorted(self.links)]
         return {"schema": SCHEMA, "project": project, "coverage": coverage,
                 "nodes": [self.nodes[k] for k in sorted(self.nodes)],
-                "links": [self.links[k] for k in sorted(self.links)],
+                "edges": normalized_edges, "links": normalized_edges,
                 "code_graph": self.code_graph, "warnings": sorted(set(self.warnings))}
+
+    def validate(self):
+        source_keys = {n["key"] for n in self.nodes.values()
+                       if n["type"] in {"Source", "Conversation"}}
+        for edge in self.links.values():
+            if edge["source"] not in self.nodes or edge["target"] not in self.nodes:
+                self.warnings.append(f"Dangling relationship: {edge['id']}")
+        missing_chats = set(self.current_coverage.get("chats_with_no_retrievable_content", []))
+        for n in self.nodes.values():
+            attrs = n.get("attributes", {})
+            if n["type"] == "Conversation":
+                chat_key = str(n["key"]).removeprefix("chat:")
+                if chat_key in missing_chats and n.get("status") == "accessible":
+                    self.warnings.append(f"Conversation {chat_key} marked accessible but content was unavailable")
+            if n["type"] == "File" and not attrs.get("path"):
+                self.warnings.append(f"File {n['key']} lacks a recorded path")
+            if n["type"] == "Result":
+                needed = {"model", "dataset", "split", "metric", "seed"}
+                missing = sorted(k for k in needed if attrs.get(k) in (None, ""))
+                if missing:
+                    self.warnings.append(f"Result {n['key']} missing structured fields: {', '.join(missing)}")
+            for e in n.get("evidence", []):
+                if e.get("confidence") not in EVIDENCE_STATES:
+                    e["confidence"] = "unknown"
+                    self.warnings.append(f"Node {n['key']} had invalid evidence confidence")
+                excerpt = str(e.get("excerpt", "")).strip()
+                if not excerpt:
+                    e["excerpt_kind"] = "missing"
+                    self.warnings.append(f"Node {n['key']} has evidence without a source excerpt")
+                elif excerpt in {str(attrs.get("purpose", "")), str(n.get("details", ""))}:
+                    e["excerpt_kind"] = "derived_summary"
+                    self.warnings.append(f"Node {n['key']} has a circular source excerpt; verify quotation")
+                if str(e.get("source_id", "")).startswith("mem:account:"):
+                    e["source_scope"] = "external_account_memory"
+                if e.get("source_id") and e["source_id"] not in source_keys:
+                    self.warnings.append(f"Unresolved evidence source for {n['key']}: {e['source_id']}")
 
 
 def by_type(graph: dict, kind: str) -> list[dict]:
@@ -358,21 +478,40 @@ def find_path(graph: dict, start: str, finish: str, max_depth: int = 10) -> list
         return matches[0]
     src, dst = resolve(start), resolve(finish)
     adjacency = {}
-    for e in graph["links"]:
+    for e in graph_edges(graph):
         adjacency.setdefault(e["source"], []).append(e["target"])
-    queue = deque([(src, [src])])
-    visited = {src}
+    queue = deque([src])
+    predecessor = {src: None}
+    depth = {src: 0}
     while queue:
-        node, path = queue.popleft()
+        node = queue.popleft()
         if node == dst:
-            return [lookup[x]["title"] for x in path]
-        if len(path) > max_depth:
+            path = []
+            while node is not None:
+                path.append(lookup[node]["title"])
+                node = predecessor[node]
+            return path[::-1]
+        if depth[node] >= max_depth:
             continue
         for nxt in adjacency.get(node, []):
-            if nxt not in visited:
-                visited.add(nxt)
-                queue.append((nxt, path + [nxt]))
+            if nxt in lookup and nxt not in predecessor:
+                predecessor[nxt] = node
+                depth[nxt] = depth[node] + 1
+                queue.append(nxt)
     return None
+
+
+def audit(graph: dict) -> dict:
+    """Read-only integrity audit, including safe normalization diagnostics."""
+    if not isinstance(graph.get("project"), dict) or not graph["project"].get("id"):
+        raise ValueError("graph has no project.id")
+    b = Builder(graph)
+    normalized = b.output(graph["project"], graph.get("coverage", {}))
+    return {"schema": normalized["schema"], "project": normalized["project"]["id"],
+            "nodes": len(normalized["nodes"]), "edges": len(normalized["edges"]),
+            "evidence": sum(len(n.get("evidence", [])) for n in normalized["nodes"]),
+            "original_schema": graph.get("schema", "unknown"),
+            "warnings": normalized["warnings"]}
 
 
 def main(argv=None):
@@ -394,13 +533,17 @@ def main(argv=None):
     p.add_argument("--from", dest="from_node", required=True)
     p.add_argument("--to", required=True)
     p.add_argument("--max-depth", type=int, default=10)
+    p = commands.add_parser("audit", help="Read-only audit of a saved browser or CLI graph")
+    p.add_argument("--graph", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             build(args)
         else:
             graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
-            if args.command == "query":
+            if args.command == "audit":
+                print(json.dumps(audit(graph), indent=2, ensure_ascii=False))
+            elif args.command == "query":
                 print(json.dumps(query(graph, args.term, args.limit), indent=2, ensure_ascii=False))
             else:
                 print(json.dumps(find_path(graph, args.from_node, args.to, args.max_depth),

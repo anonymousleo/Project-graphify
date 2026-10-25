@@ -1,8 +1,22 @@
-# Project Graphify evidence graph schema v1
+# Project Graphify evidence graph schema v1 (plugin 1.0.1)
 
 This is a **temporal, sourced** graph. The graph is not equivalent to a factual
 database: every assertion must be attributable to a chat, file, run log, or user
 statement. Keep older observations when later work changes an outcome.
+
+## Browser/CLI compatibility
+
+Canonical schema: `project-graphify/v1`. Browser-built archives use `edges`;
+the CLI also exports an **identical** `links` alias for clients of v1.0.0.
+Both fields describe directed edges with `id`, `source`, `relation`, `target`.
+The CLI accepts historical `project-graphify-1.0` graphs and either relationship
+field. If both fields exist but disagree, it raises an error rather than
+silently choosing one. Importing older graphs preserves node IDs, normalizes
+known inverted relationship directions and flags questionable evidence.
+
+The old browser builder used a different node-ID hash than the local CLI.
+Incremental imports must deduplicate by `(type,key)` and keep previously
+assigned IDs; rehashing all old nodes disconnects saved edges.
 
 ## Input envelope
 
@@ -68,10 +82,33 @@ Store exact evidence on the relevant node. `confidence` is one of
 `observed`, `user_reported`, `assistant_proposed`, `inferred`, `unknown`.
 Confidence is an evidence category, not a numeric probability.
 
+Every evidence record should contain `source_id`, source date/message locator
+if known, and `excerpt_kind`: `verbatim_unverified` for source text transcribed
+by the agent, `derived_summary` for an interpretation or description,
+`unverified_excerpt` for imported records without quote-level provenance,
+or `missing`. An `observed` label is still only as trustworthy as the actual
+referenced artifact. Cross-project account-memory evidence must be explicitly
+marked `source_scope=external_account_memory` and not silently applied to the
+current Project. **Do not copy the generated File purpose into its supporting
+excerpt and present the two identical strings as independent evidence.**
+
 Examples of relations: `has_goal`, `depends_on`, `implements`, `generated`,
 `measures`, `uses_dataset`, `used_seed`, `supersedes`, `failed_due_to`,
 `located_at`, `derived_from`, `supported_by`, `contains_message`, `mentions_path`,
 `calls`, `imports`, `inherits`, `contains`, `affects`.
+
+Important directions:
+
+| Source type | Relationship | Target type | Example |
+| --- | --- | --- | --- |
+| Experiment | `generated` | Result | A grid-search run generated an F1 value |
+| Task / Experiment / Decision | `failed_due_to` | Blocker | A blocked run failed due to missing data |
+| Newer result/decision | `supersedes` | Older result/decision | Verified rerun supersedes an invalid earlier run |
+| Result / File / other fact | `supported_by` | Source | Evaluation result supported by a log |
+
+Only correct reversed `generated` / `failed_due_to` relationships when the
+two endpoint types make the inversion unambiguous; otherwise preserve and warn.
+No semantic edge can substitute for an actual evidence source.
 
 ## Safety and inference
 
@@ -85,7 +122,8 @@ Examples of relations: `has_goal`, `depends_on`, `implements`, `generated`,
 5. `coverage.exhaustive=true` requires `verified_complete_export=true` plus
    a verifiable complete chat inventory. Native relevance search alone cannot
    prove completeness.
-6. Stable IDs are SHA256 over `type:key`; edges use relation plus both IDs.
+6. Newly created local IDs are SHA256 over `type:key`; imported historical
+   IDs are preserved. New edges use relation plus both IDs.
    Merge time and storage scale linearly with node and edge counts, apart from
    deterministic sorting of output. No network or paid inference is needed.
 7. Original Graphify graphs can be imported using `--code-graph`; their raw

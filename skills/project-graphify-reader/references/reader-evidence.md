@@ -9,6 +9,32 @@
 5. **Two campaigns share filenames:** Disambiguate by project, branch, dataset and run. Do not merge checkpoints from different experiments.
 6. **User says 'continue immediately':** Give one verified next action. If it starts training, changes code, touches credentials or modifies a running process, get the normal approval first.
 
+## Raw knowledge-graph retrieval checklist
+
+1. Load `graph.json` and locate the single Project identity; ensure it matches
+   the open Claude Project. Read `schema`, `coverage`, `warnings`, `nodes`,
+   and `edges` or `links` (and compare both when both are present).
+2. Resolve questions by node `type` and `key` (Goal, Experiment, Result, File,
+   Decision, Task, Blocker), then follow directed edges by **node ID**.
+3. For consequential claims, fetch the matching `evidence.jsonl` row using
+   node ID (`node_id` in CLI output; `node` in early browser output) and inspect
+   `source_id`, `date`, `confidence`, `excerpt` and `excerpt_kind`.
+4. A quote is not verified merely because it is called `observed` or because
+   it duplicates the builder-generated `purpose`. If the original message,
+   log, code excerpt or line reference is absent, state that limitation.
+5. Do not treat out-of-project `mem:account:*` claims as active-project choices.
+   Synthetic Amazon deduplication examples cannot determine repeat-item rates
+   in the user's actual preprocessed baskets.
+6. Read `chats_with_no_retrievable_content` and compare with Conversation
+   node status; a visible chat title does not mean its messages were recovered.
+7. If the graph is stale or contradictory, show evidence and recommend a Writer
+   refresh. A Reader-only invocation must not modify graph artifacts.
+
+The Reader should answer a user's focused question by retrieving only the
+relevant portion of the graph. It should not flood a normal continuation brief
+with every node. If the user asks for a complete file inventory or all results,
+enumerate them and report which fields remain unknown.
+
 ## Minimal restart brief
 
 - Project and intended outcome (plus *why*).

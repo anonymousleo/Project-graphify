@@ -2,6 +2,20 @@
 
 **Evidence-backed project memory and knowledge graphs for Claude Projects.**
 
+## Release v1.0.1
+
+This maintenance update responds to two live tests in a Claude Project.
+The Reader retrieved 105 graph nodes, 259 relationships and 103 evidence
+records, while the graph audit exposed generated-as-quotation evidence,
+inverted relationship directions, and inconsistent chat coverage labels.
+Version 1.0.1 adds browser/CLI schema compatibility (`edges` and `links`),
+normalization of unambiguously reversed edges, stronger evidence and result
+warnings, stable ID preservation across imports, and clearer Writer/Reader
+instructions. No Claude browser test of **this new release** is yet claimed.
+
+**Existing user graph files remain separate:** do not replace the only copy of
+your current `graph.json`. Back it up first and test any migration on a copy.
+
 Project Graphify helps researchers and developers resume long-running projects
 across Claude conversations. It turns accessible chat history, project goals,
 experiments, results, code paths, decisions, and blockers into a persistent
@@ -140,10 +154,17 @@ an online model or extra Python dependencies:
 python3 tools/project_graphify.py build --input examples/sample_history.json --output graphify-project-out
 python3 tools/project_graphify.py query --graph graphify-project-out/graph.json --term baseline
 python3 tools/project_graphify.py path --graph graphify-project-out/graph.json --from 'research-goal' --to 'baseline-task'
+python3 tools/project_graphify.py audit --graph graphify-project-out/graph.json
 ```
 
 `--existing old/graph.json` incrementally merges older facts; conflicting
-values are retained. `--code-graph graphify-out/graph.json` imports the native
+values are retained. Historical Claude-generated `project-graphify/v1` files
+with `edges`, and older CLI `project-graphify-1.0` files with `links`, are
+both supported. New CLI output includes matching `edges` and `links` keys for
+backward compatibility. Known reversed `generated` and `failed_due_to`
+relationships are normalized with an explicit warning. A citation matching
+its own generated summary is flagged, not treated as independent evidence.
+`--code-graph graphify-out/graph.json` imports the native
 Graphify code graph while retaining its original unmodified JSON alongside the
 result. `--include-message-text` explicitly opts into storing raw chat text;
 otherwise message metadata/digests are stored to reduce privacy exposure.
@@ -172,9 +193,10 @@ Original upstream project: [Graphify-Labs/graphify](https://github.com/Graphify-
 python3 -m unittest discover -s tests -v
 ```
 
-The packaged release passed **11 offline unit tests**, including provenance,
+The updated source passes **18 offline unit tests**, including provenance,
 proposed-versus-completed status, conflict preservation, stable IDs,
-incremental merging, graph queries, and native Graphify code-graph import.
+incremental legacy-browser merging, relationship normalization, graph queries,
+and native Graphify code-graph import.
 Manual skill scenarios are documented in
 [evals/skill_scenarios.md](evals/skill_scenarios.md). Browser-side plugin
 installation remains subject to the actual Claude account and platform.

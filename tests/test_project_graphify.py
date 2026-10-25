@@ -23,7 +23,109 @@ def make_graph(data=None, old=None):
     return builder.output(data["project"], data.get("coverage", {}))
 
 
+def browser_graph_fixture():
+    """Synthetic reproduction of the Claude browser's original graph dialect."""
+    return {
+        "schema": "project-graphify/v1",
+        "project": {"id": "legacy-project-id", "name": "Demo"},
+        "coverage": {"exhaustive": False, "chats_with_no_retrievable_content": ["lost-chat"]},
+        "nodes": [
+            {"id": "old-project", "type": "Project", "key": "demo", "title": "Demo"},
+            {"id": "old-experiment", "type": "Experiment", "key": "grid", "title": "Grid"},
+            {"id": "old-result", "type": "Result", "key": "score", "title": "Score",
+             "attributes": {"model": "M", "dataset": "D", "split": "test",
+                            "metric": "F1@5", "seed": 2026},
+             "evidence": [{"source_id": "chat:run", "confidence": "user_reported",
+                           "excerpt": "score: 0.12"}]},
+            {"id": "old-file", "type": "File", "key": "train.py", "title": "train.py",
+             "details": "Train the model", "attributes": {"path": "train.py",
+              "purpose": "Train the model", "verified_on_disk": False},
+             "evidence": [{"source_id": "chat:run", "confidence": "assistant_proposed",
+                           "excerpt": "Train the model"}]},
+            {"id": "old-chat", "type": "Conversation", "key": "chat:lost-chat",
+             "title": "Old chat", "status": "accessible"},
+            {"id": "old-source", "type": "Source", "key": "chat:run", "title": "Log"},
+            {"id": "old-blocker", "type": "Blocker", "key": "blocked", "title": "Blocked"},
+            {"id": "old-task", "type": "Task", "key": "task", "title": "Task"},
+        ],
+        "edges": [
+            {"id": "wrong-generated", "source": "old-result", "target": "old-experiment",
+             "relation": "generated"},
+            {"id": "wrong-blocker", "source": "old-blocker", "target": "old-task",
+             "relation": "failed_due_to"},
+        ],
+        "warnings": [],
+    }
+
+
 class ProjectGraphifyTests(unittest.TestCase):
+    def test_browser_graph_normalizes_without_discarding_old_nodes(self):
+        previous = browser_graph_fixture()
+        b = pg.Builder(previous)
+        graph = b.output(previous["project"], {})
+        self.assertEqual(len(graph["nodes"]), 8)
+        self.assertEqual(len(graph["edges"]), 2)
+        self.assertEqual(graph["edges"], graph["links"])
+        self.assertIn({"source": "old-experiment", "relation": "generated",
+                       "target": "old-result"},
+                      [{k: e[k] for k in ("source", "relation", "target")}
+                       for e in graph["edges"]])
+        self.assertTrue(any("Corrected reversed generated" in x for x in graph["warnings"]))
+        self.assertTrue(any("circular source excerpt" in x for x in graph["warnings"]))
+        self.assertTrue(any("content was unavailable" in x for x in graph["warnings"]))
+        again = pg.Builder(graph).output(previous["project"], {})
+        self.assertEqual(again, graph)
+
+    def test_browser_incremental_merge_preserves_node_ids_and_relations(self):
+        previous = browser_graph_fixture()
+        b = pg.Builder(previous)
+        b.load_data({"project": previous["project"], "facts": [
+            {"kind": "Result", "key": "score", "title": "Score", "status": "completed",
+             "attributes": {"model": "M", "dataset": "D", "split": "test",
+                            "metric": "F1@5", "seed": 2026},
+             "evidence": [{"source_id": "chat:run", "confidence": "observed",
+                           "excerpt": "score: 0.12"}]},
+        ]})
+        merged = b.output(previous["project"], {})
+        self.assertEqual(len(pg.by_type(merged, "Project")), 1)
+        self.assertEqual(len(pg.by_type(merged, "Result")), 1)
+        self.assertEqual(len(merged["edges"]), len({(e["source"], e["target"], e["relation"])
+                                                  for e in merged["edges"]}))
+
+    def test_mismatched_edge_aliases_rejected(self):
+        data = browser_graph_fixture()
+        data["links"] = []
+        with self.assertRaisesRegex(ValueError, "disagree"):
+            pg.Builder(data)
+
+    def test_edge_only_reader_path(self):
+        graph = browser_graph_fixture()
+        graph["edges"] = [{"id": "e", "source": "old-experiment",
+                           "target": "old-result", "relation": "generated"}]
+        self.assertEqual(pg.find_path(graph, "grid", "score"), ["Grid", "Score"])
+
+    def test_read_only_audit_preserves_original(self):
+        graph = browser_graph_fixture()
+        original = json.dumps(graph, sort_keys=True)
+        outcome = pg.audit(graph)
+        self.assertEqual(outcome["nodes"], 8)
+        self.assertEqual(outcome["edges"], 2)
+        self.assertEqual(outcome["original_schema"], "project-graphify/v1")
+        self.assertEqual(json.dumps(graph, sort_keys=True), original)
+
+    def test_reject_duplicate_legacy_type_key(self):
+        graph = browser_graph_fixture()
+        graph["nodes"].append({"id": "duplicate-result", "type": "Result", "key": "score"})
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            pg.Builder(graph)
+
+    def test_incomplete_result_scope_is_reported_without_fabrication(self):
+        data = sample()
+        data["facts"][2]["attributes"].pop("seed")
+        graph = make_graph(data)
+        self.assertTrue(any("missing structured fields: seed" in w for w in graph["warnings"]))
+        result = pg.by_type(graph, "Result")[0]
+        self.assertNotIn("seed", result["attributes"])
     def test_goal_results_and_file_purpose(self):
         graph = make_graph()
         self.assertEqual(len(pg.by_type(graph, "Goal")), 1)
