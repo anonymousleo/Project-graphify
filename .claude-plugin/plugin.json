@@ -1,0 +1,8 @@
+{
+  "name": "project-graphify",
+  "displayName": "Project Graphify",
+  "version": "1.0.0",
+  "description": "Build an evidence-backed project knowledge graph from Claude project chat search, user-provided chat archives, goals, files, decisions, progress, and results, and recover context with Project Graphify Reader.",
+  "author": {"name": "Project Graphify custom adaptation"},
+  "license": "Apache-2.0"
+}

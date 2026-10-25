@@ -1,0 +1,132 @@
+{
+  "project": {
+    "id": "research-project-demo",
+    "name": "Research Project Demo",
+    "updated_at": "2026-10-26"
+  },
+  "coverage": {
+    "mode": "project_chat_search",
+    "exhaustive": false,
+    "included_chats": 1,
+    "notes": "Illustrative synthetic example only"
+  },
+  "sources": [
+    {
+      "id": "chat:first-experiment",
+      "type": "chat",
+      "title": "First experiment",
+      "date": "2026-10-25",
+      "complete": true
+    }
+  ],
+  "conversations": [
+    {
+      "id": "chat:first-experiment",
+      "title": "First experiment",
+      "messages": [
+        {
+          "id": "m1",
+          "role": "user",
+          "timestamp": "2026-10-25",
+          "content": "Goal is a reproducible paper; logs are in ~/Desktop/Example/logs/train.log"
+        },
+        {
+          "id": "m2",
+          "role": "assistant",
+          "timestamp": "2026-10-25",
+          "content": "We could run another training experiment next."
+        }
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "kind": "Goal",
+      "key": "research-goal",
+      "title": "Reproducible paper",
+      "details": "Publish a rigorously reproducible study",
+      "status": "active",
+      "attributes": {"success": "Verified results and paper"},
+      "evidence": [
+        {
+          "source_id": "chat:first-experiment",
+          "message_id": "m1",
+          "confidence": "user_reported",
+          "excerpt": "Goal is a reproducible paper"
+        }
+      ],
+      "links": [
+        {
+          "relation": "depends_on",
+          "target_kind": "Task",
+          "target_key": "baseline-task"
+        }
+      ]
+    },
+    {
+      "kind": "File",
+      "key": "train-log",
+      "title": "Training log",
+      "details": "Records epoch outputs of baseline training",
+      "status": "historical",
+      "attributes": {
+        "path": "~/Desktop/Example/logs/train.log",
+        "purpose": "Audit training",
+        "verified_on_disk": false
+      },
+      "evidence": [
+        {
+          "source_id": "chat:first-experiment",
+          "message_id": "m1",
+          "confidence": "user_reported",
+          "excerpt": "logs are in ~/Desktop/Example/logs/train.log"
+        }
+      ]
+    },
+    {
+      "kind": "Result",
+      "key": "baseline-demo-validation-seed-2026-f1at5",
+      "title": "Baseline F1@5 = 0.12",
+      "details": "Validation, not final test",
+      "status": "completed",
+      "attributes": {
+        "model": "Baseline",
+        "dataset": "Demo",
+        "split": "validation",
+        "seed": 2026,
+        "metric": "F1@5",
+        "value": 0.12,
+        "unit": "fraction",
+        "run_id": "B001"
+      },
+      "evidence": [
+        {
+          "source_id": "chat:first-experiment",
+          "confidence": "observed",
+          "excerpt": "B001 validation F1@5 0.12 (synthetic test example)"
+        }
+      ]
+    },
+    {
+      "kind": "Task",
+      "key": "baseline-task",
+      "title": "Reproduce another baseline",
+      "details": "Not yet started",
+      "status": "pending",
+      "evidence": [
+        {
+          "source_id": "chat:first-experiment",
+          "confidence": "assistant_proposed",
+          "excerpt": "We could run another training experiment next"
+        }
+      ]
+    },
+    {
+      "kind": "Blocker",
+      "key": "pending-gpu",
+      "title": "GPU availability unknown",
+      "status": "unknown",
+      "evidence": []
+    }
+  ]
+}

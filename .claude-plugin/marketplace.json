@@ -1,0 +1,14 @@
+{
+  "name": "project-graphify-marketplace",
+  "description": "Project knowledge graphs and persistent context recovery for Claude",
+  "owner": {
+    "name": "anonymousleo"
+  },
+  "plugins": [
+    {
+      "name": "project-graphify",
+      "source": "./",
+      "description": "Build evidence-backed knowledge graphs from Claude Projects and recover context across conversations."
+    }
+  ]
+}
